@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>성적 순위 계산기 (Firebase)</title>
+<style>
+body { font-family: Arial, sans-serif; background:#f6f6f6; display:flex; justify-content:center; align-items:flex-start; padding-top:30px; }
+.container { background:#fff; padding:30px; border-radius:12px; width:480px; max-height:95vh; overflow-y:auto; box-shadow:0 2px 10px rgba(0,0,0,0.1);}
+h1 { text-align:center; }
+input { width:100%; padding:10px; margin:6px 0; border-radius:5px; border:1px solid #ccc; }
+.error { color:red; font-size:13px; margin-top:-4px; margin-bottom:8px; display:none; }
+button { width:100%; padding:10px; background:#4CAF50; color:white; border:none; border-radius:5px; cursor:pointer; font-size:16px; margin-top:10px; }
+button:hover { background:#45a049; }
+.result { margin-top:20px; font-size:16px; line-height:1.6; }
+table { width:100%; border-collapse:collapse; margin-top:10px; }
+th, td { border:1px solid #ddd; padding:8px; text-align:center; }
+th { background:#f0f0f0; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>성적 순위 계산기</h1>
+  <p>학번과 이름, 각 과목 점수를 입력하세요.</p>
+
+  <input type="text" id="studentIdName" placeholder="예: 22222 김춘자">
+
+  <div id="inputs"></div>
+
+  <button id="saveBtn">순위 확인</button>
+
+  <div class="result" id="result"></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+import { getFirestore, doc, setDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+
+// 🔧 Firebase 설정 → 본인 프로젝트 값으로 교체
+const firebaseConfig = {
+  apiKey: "AIzaSyBq02FMgQeRNhDPTfdg0jZHVTYswpjpHvM",
+  authDomain: "ishh-7b11e.firebaseapp.com",
+  projectId: "ishh-7b11e"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// 과목 정의
+const subjects = [
+  { id: "korean", name: "국어" },
+  { id: "math", name: "수학" },
+  { id: "english", name: "영어" },
+  { id: "physics", name: "물리" },
+  { id: "chemistry", name: "화학" },
+  { id: "biology", name: "생명" },
+  { id: "earth", name: "지구" },
+  { id: "prob", name: "확통" },
+  { id: "japanese", name: "일본어" }
+];
+
+// 입력 필드 생성
+const inputContainer = document.getElementById("inputs");
+subjects.forEach(sub => {
+  inputContainer.innerHTML += `
+    <div>
+      <input type="number" id="${sub.id}" placeholder="${sub.name} 점수">
+      <div class="error" id="${sub.id}-error">${sub.name} 점수는 0~100 사이로 입력하세요.</div>
+    </div>
+  `;
+});
+
+// 저장 & 계산 버튼
+document.getElementById("saveBtn").onclick = async () => {
+  const studentIdName = document.getElementById("studentIdName").value.trim();
+  if (!studentIdName) { alert("학번과 이름을 입력하세요!"); return; }
+
+  let valid = true;
+  const scores = {};
+  subjects.forEach(sub => {
+    const val = Number(document.getElementById(sub.id).value);
+    const errorMsg = document.getElementById(sub.id + "-error");
+    if (isNaN(val) || val < 0 || val > 100) {
+      errorMsg.style.display = "block";
+      valid = false;
+    } else {
+      errorMsg.style.display = "none";
+      scores[sub.id] = val;
+    }
+  });
+  if (!valid) return;
+
+  const total = Object.values(scores).reduce((a,b)=>a+b,0);
+  const avg = (total/subjects.length).toFixed(2);
+
+  // Firestore에 저장 (같은 이름이면 덮어쓰기)
+  await setDoc(doc(db, "students", studentIdName), { scores, total, avg });
+
+  showMyResult(studentIdName);
+}
+
+// Firestore에서 모든 학생 데이터 가져오기
+async function getAllStudents() {
+  const querySnap = await getDocs(collection(db, "students"));
+  const students = [];
+  querySnap.forEach(docSnap => {
+    students.push({ name: docSnap.id, ...docSnap.data() });
+  });
+  return students;
+}
+
+// 내 점수 + 등수 표시
+async function showMyResult(studentIdName) {
+  const students = await getAllStudents();
+
+  // 과목별 등수 계산
+  const subjectRanks = {};
+  subjects.forEach(sub => {
+    const sorted = [...students].sort((a,b)=>b.scores[sub.id]-a.scores[sub.id]);
+    sorted.forEach((stu, idx) => {
+      if (!subjectRanks[stu.name]) subjectRanks[stu.name] = {};
+      subjectRanks[stu.name][sub.id] = idx + 1;
+    });
+  });
+
+  // 총점 순위
+  students.sort((a,b)=>b.total - a.total);
+  const totalRank = students.findIndex(s=>s.name===studentIdName)+1;
+  const me = students.find(s=>s.name===studentIdName);
+
+  if (!me) { document.getElementById("result").innerHTML="<p>학생 정보를 찾을 수 없습니다.</p>"; return; }
+
+  document.getElementById("result").innerHTML = `
+    <b>${totalRank}위 - ${me.name}</b><br>
+    총점: ${me.total}, 평균: ${me.avg}<br>
+    <table>
+      <tr><th>과목</th>${subjects.map(s=>`<th>${s.name}</th>`).join("")}</tr>
+      <tr><td>점수</td>${subjects.map(s=>`<td>${me.scores[s.id]}</td>`).join("")}</tr>
+      <tr><td>등수</td>${subjects.map(s=>`<td>${subjectRanks[me.name][s.id]}위</td>`).join("")}</tr>
+    </table>
+  `;
+}
+</script>
+
+</body>
+</html>
